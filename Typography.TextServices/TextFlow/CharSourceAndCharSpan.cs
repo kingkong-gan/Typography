@@ -3,7 +3,6 @@
 using System;
 
 using System.Text;
-using PixelFarm.CpuBlit;
 using Typography.TextBreak;
 
 namespace Typography.Text
