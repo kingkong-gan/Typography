@@ -279,6 +279,8 @@ namespace Typography.Text
             }
         }
     }
+    
+    
     /// <summary>
     /// forward only character source 
     /// </summary>

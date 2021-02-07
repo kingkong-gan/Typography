@@ -21,20 +21,21 @@ namespace Typography.Text
     /// <summary>
     /// immutable plain text line
     /// </summary>
-    public class PlainTextLine
+    public struct PlainTextLine
     {
         readonly char[] _text;//***
 
         public PlainTextLine(string text)
         {
             _text = text.ToCharArray();
+            EndWith = PlainTextLineEnd.None;
         }
         public PlainTextLine(char[] buffer)
         {
             _text = buffer;
+            EndWith = PlainTextLineEnd.None;
         }
         public PlainTextLineEnd EndWith { get; set; }
-
 
         public string GetText() => new string(_text);
 
