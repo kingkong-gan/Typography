@@ -2,7 +2,7 @@
 using System;
 using System.Text;
 
-namespace LayoutFarm.TextEditing
+namespace Typography.Text
 {
     public enum PlainTextLineEnd : byte
     {
