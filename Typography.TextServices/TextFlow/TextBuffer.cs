@@ -196,7 +196,7 @@ namespace Typography.Text
         {
             EnsureSpaceForAppend(len);
             System.Array.Copy(arr, start, _internalArray, _currentSize, len);
-            _currentSize = _currentSize + len;
+            _currentSize += len;
         }
         public void CopyAndAppend(int srcIndex, int len)
         {

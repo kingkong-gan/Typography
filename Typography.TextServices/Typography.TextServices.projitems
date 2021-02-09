@@ -9,7 +9,7 @@
     <Import_RootNamespace>Typography.TextServices</Import_RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="$(MSBuildThisFileDirectory)TextFlow\ArrayList.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)TextFlow\TextBuffer.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)TextFlow\CharSourceAndCharSpan.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)TextFlow\DocumentActions.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)TextFlow\PlainTextDocument.cs" />
