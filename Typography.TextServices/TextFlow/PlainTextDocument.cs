@@ -67,10 +67,10 @@ namespace Typography.Text
     }
 
 
-    public class EditableTextLine1
-    { 
-        internal EditableTextLine1()
-        { 
+    public class EditableTextLine
+    {
+        internal EditableTextLine()
+        {
         }
         public CharBufferSegment Content { get; set; }
     }
@@ -78,12 +78,20 @@ namespace Typography.Text
     class LineEditor
     {
         PlainTextBlock _textBlock;//owner
-        EditableTextLine1 _line;
+        EditableTextLine _line;
 
         //TODO: review a proper data structure again,use tree of character? (eg RB tree?)
         //esp for a long line insertion, deletion
         readonly TextBuffer<int> _arrList = new TextBuffer<int>();
 
+        bool _changed;
+        bool _loaded;
+        int _initContentLen;
+
+        /// <summary>
+        /// begin at 0 for new char index
+        /// </summary>
+        int _newCharIndex;//new character index 1:1 based on backend buffer (utf16 or utf32)
         internal LineEditor()
         {
 
@@ -95,43 +103,69 @@ namespace Typography.Text
         public void Read(TextCopyBufferUtf32 output)
         {
             //read data from this line and write to output
-            output.AppendData(_arrList.UnsafeInternalArray, 0, _arrList.Length);
+            if (_loaded)
+            {
+                output.AppendData(_arrList.UnsafeInternalArray, 0, _arrList.Length);
+            }
+            else
+            {
+                //not load then
+                _line.Content.WriteTo(output);
+            }
+
         }
         public void Read(TextCopyBufferUtf32 output, int index, int len)
         {
-            output.AppendData(_arrList.UnsafeInternalArray, index, len);
+            if (_loaded)
+            {
+                output.AppendData(_arrList.UnsafeInternalArray, index, len);
+            }
+            else
+            {
+                _line.Content.WriteTo(output, index, len);
+            }
         }
-        public void Bind(EditableTextLine1 line)
+        public void Bind(EditableTextLine line)
         {
             if (_line == line)
             {
                 return;//same line
             }
             //
-            if (_line != null)
+            if (_line != null && _changed)
             {
-                //update content back 
+                //update content back             
                 _line.Content = _textBlock.CharSource.NewSpan(_arrList.UnsafeInternalArray, 0, _arrList.Length);
             }
             //
             _line = line;
-            _newCharIndex = 0;//init
-            NewCharIndex = 0;//reset
-
-            CharBufferSegment content = line.Content;
+            //reset
+            _newCharIndex = 0;
+            _initContentLen = line.Content.len;
+            _changed = false;
+            _loaded = false;
             _arrList.Clear();
 
+            NewCharIndex = 0;
+        }
+
+        /// <summary>
+        /// load content of each line to edit mode
+        /// </summary>
+        void Load()
+        {
+            if (_loaded) { return; }
+
+            //
+            CharBufferSegment content = _line.Content;
             if (content.len > 0)
             {
                 //copy content to temp buffer
                 content.WriteTo(_arrList);
             }
+            _loaded = true;
 
         }
-        /// <summary>
-        /// begin at 0 for new char index
-        /// </summary>
-        int _newCharIndex;//new character index 1:1 based on backend buffer (utf16 or utf32)
         /// <summary>
         /// character index for new insertion
         /// </summary>
@@ -140,7 +174,7 @@ namespace Typography.Text
             get => _newCharIndex;
             set
             {
-                if (value <= _arrList.Count)
+                if (value <= ((!_loaded) ? _initContentLen : _arrList.Count))
                 {
                     _newCharIndex = value;
                 }
@@ -152,45 +186,60 @@ namespace Typography.Text
             }
         }
 
-        public bool CharIndexOnTheEnd => _newCharIndex == _arrList.Count;
+        public bool CharIndexOnTheEnd => _newCharIndex == Count;
 
         public void AddText(TextCopyBufferUtf32 copyBuffer, int start, int len)
         {
+            if (!_loaded) { Load(); }//
+
             copyBuffer.CopyTo(_arrList, _newCharIndex, start, len);
             _newCharIndex += len;
+            _changed = true;
         }
 
         public void Split(TextCopyBufferUtf32 rightPart)
         {
+            if (!_loaded) { Load(); }//
+
             int rightPartLen = _arrList.Count - _newCharIndex;
             rightPart.AppendData(_arrList, _newCharIndex, rightPartLen);
             _arrList.Remove(_newCharIndex, rightPartLen);
+            _changed = true;
         }
         /// <summary>
         /// single delete
         /// </summary>
         public void DoDelete()
         {
+            if (!_loaded) { Load(); }
+
             if (_newCharIndex < Count)
             {
                 _newCharIndex++;
                 DoBackSpace();
+                _changed = true;
             }
         }
         public void DeleteRange(int start, int len)
         {
+            if (!_loaded) { Load(); }
+
             _arrList.Remove(start, len);
             _newCharIndex = start;
+            _changed = true;
         }
         /// <summary>
         /// single backspace
         /// </summary>
         public void DoBackSpace()
         {
+            if (!_loaded) { Load(); }
+
             if (_newCharIndex < 1) { return; }//early exit
             //
             _arrList.Remove(_newCharIndex - 1, 1);
             _newCharIndex--;
+            _changed = true;
         }
         /// <summary>
         /// add character to current index
@@ -198,36 +247,41 @@ namespace Typography.Text
         /// <param name="c"></param>
         public void AddChar(int c)
         {
-            //after bind
+
+            if (!_loaded) { Load(); }
+
             if (_arrList.Count == _newCharIndex)
             {
                 //the last one
                 _arrList.Append(c);
-                _newCharIndex++;
             }
             else
             {
                 _arrList.Insert(_newCharIndex, c);
-                _newCharIndex++;
             }
+            _newCharIndex++;
+            _changed = true;
         }
         public void Clear()
         {
+            if (!_loaded) { Load(); }//
+
             _arrList.Clear();
             _newCharIndex = 0;
+            _changed = true;
         }
         /// <summary>
         /// character count
         /// </summary>
-        public int Count => _arrList.Count;
+        public int Count => _loaded ? _arrList.Count : _initContentLen;
     }
 
 
     public class PlainTextBlock : ITextFlowEditSession
     {
         int _currentLineNo;
-        readonly List<EditableTextLine1> _lines = new List<EditableTextLine1>();
-        EditableTextLine1 _currentLine;
+        readonly List<EditableTextLine> _lines = new List<EditableTextLine>();
+        EditableTextLine _currentLine;
         CharSource _charSource = new CharSource();
         LineEditor _lineEditor = new LineEditor();
         TextCopyBufferUtf32 _copyBuffer = new TextCopyBufferUtf32();
@@ -237,13 +291,13 @@ namespace Typography.Text
         {
             //always start with blank lines 
             _lineEditor.Bind(this);
-            _lines.Add(new EditableTextLine1());
+            _lines.Add(new EditableTextLine());
             CurrentLineNumber = 0;
         }
         public void Clear()
         {
             _lines.Clear();
-            _lines.Add(new EditableTextLine1());
+            _lines.Add(new EditableTextLine());
             CurrentLineNumber = 0;
         }
 
@@ -272,7 +326,7 @@ namespace Typography.Text
                 {
                     _currentLineNo = value;
 
-                    EditableTextLine1 line = _lines[value];
+                    EditableTextLine line = _lines[value];
                     if (_currentLine != line)
                     {
                         //change 
@@ -344,12 +398,12 @@ namespace Typography.Text
                     if (_currentLineNo == _lines.Count - 1)
                     {
                         //now we are in the last line
-                        _lines.Add(new EditableTextLine1());
+                        _lines.Add(new EditableTextLine());
                         CurrentLineNumber++;
                     }
                     else
                     {
-                        _lines.Insert(CurrentLineNumber + 1, new EditableTextLine1());
+                        _lines.Insert(CurrentLineNumber + 1, new EditableTextLine());
                         CurrentLineNumber++;//move to lower
                     }
                 }
@@ -504,7 +558,7 @@ namespace Typography.Text
             if (_lineEditor.CharIndexOnTheEnd)
             {
                 //end of current line
-                _lines.Insert(CurrentLineNumber + 1, new EditableTextLine1());
+                _lines.Insert(CurrentLineNumber + 1, new EditableTextLine());
                 CurrentLineNumber++;//move to lower
             }
             else
@@ -514,7 +568,7 @@ namespace Typography.Text
                 _lineEditor.Split(_copyBuffer);
 
                 //insert newline
-                _lines.Insert(CurrentLineNumber + 1, new EditableTextLine1());
+                _lines.Insert(CurrentLineNumber + 1, new EditableTextLine());
                 CurrentLineNumber++;//move to lower
                 _lineEditor.AddText(_copyBuffer, 0, _copyBuffer.Length);
                 _lineEditor.NewCharIndex = 0;//move to line start
