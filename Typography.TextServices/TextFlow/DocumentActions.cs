@@ -6,7 +6,7 @@ using Typography.Text;
 
 namespace LayoutFarm.TextEditing.Commands
 {
-    
+
     public enum DocumentActionName
     {
         CharTyping,
@@ -26,16 +26,14 @@ namespace LayoutFarm.TextEditing.Commands
     }
     public interface ITextFlowEditSession : ITextFlowSelectSession
     {
-
         void TryMoveCaretTo(int charIndex, bool backward = false);
         bool DoBackspace();
-        void AddCharToCurrentLine(int c);
+        void AddChar(int c);
         VisualSelectionRangeSnapShot DoDelete();
         void DoEnd();
         void DoHome();
-        void SplitCurrentLineIntoNewLine();
-        void AddTextRunsToCurrentLine(TextCopyBuffer copy);
-
+        void SplitIntoNewLine();
+        void AddText(TextCopyBuffer copy);
     }
 
     public enum ChangeRegion
@@ -84,7 +82,7 @@ namespace LayoutFarm.TextEditing.Commands
         {
             editSess.CurrentLineNumber = _startLineNumber;
             editSess.TryMoveCaretTo(_startCharIndex);
-            editSess.AddCharToCurrentLine(_c);
+            editSess.AddChar(_c);
         }
 #if DEBUG
         public override string ToString()
@@ -112,7 +110,7 @@ namespace LayoutFarm.TextEditing.Commands
         {
             editSess.CurrentLineNumber = _startLineNumber;
             editSess.TryMoveCaretTo(_startCharIndex);
-            editSess.SplitCurrentLineIntoNewLine();
+            editSess.SplitIntoNewLine();
         }
     }
     public class DocActionJoinWithNextLine : DocumentAction
@@ -127,7 +125,7 @@ namespace LayoutFarm.TextEditing.Commands
         {
             editSess.CurrentLineNumber = _startLineNumber;
             editSess.TryMoveCaretTo(_startCharIndex);
-            editSess.SplitCurrentLineIntoNewLine();
+            editSess.SplitIntoNewLine();
         }
         public override void InvokeRedo(ITextFlowEditSession editSess)
         {
@@ -153,7 +151,7 @@ namespace LayoutFarm.TextEditing.Commands
         {
             editSess.CurrentLineNumber = _startLineNumber;
             editSess.TryMoveCaretTo(_startCharIndex);
-            editSess.AddCharToCurrentLine(_c);
+            editSess.AddChar(_c);
         }
         public override void InvokeRedo(ITextFlowEditSession editSess)
         {
@@ -188,7 +186,7 @@ namespace LayoutFarm.TextEditing.Commands
             //TODO: check if we need to preserve format or not?
             editSess.CurrentLineNumber = _startLineNumber;
             editSess.TryMoveCaretTo(_startCharIndex);
-            editSess.AddTextRunsToCurrentLine(_deletedText);
+            editSess.AddText(_deletedText);
         }
         public override void InvokeRedo(ITextFlowEditSession editSess)
         {
@@ -237,7 +235,7 @@ namespace LayoutFarm.TextEditing.Commands
         {
             editSess.CurrentLineNumber = _startLineNumber;
             editSess.TryMoveCaretTo(_startCharIndex);
-            editSess.AddTextRunsToCurrentLine(_newText);
+            editSess.AddText(_newText);
         }
     }
 

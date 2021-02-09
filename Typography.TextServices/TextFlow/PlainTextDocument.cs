@@ -1,6 +1,11 @@
 ﻿//MIT, 2019-present, WinterDev
 using System;
+using System.IO;
 using System.Text;
+using System.Collections.Generic;
+
+using LayoutFarm.TextEditing.Commands;
+using LayoutFarm.TextEditing;
 
 namespace Typography.Text
 {
@@ -21,7 +26,7 @@ namespace Typography.Text
     /// <summary>
     /// immutable plain text line
     /// </summary>
-    public struct PlainTextLine
+    public class PlainTextLine
     {
         readonly char[] _text;//***
 
@@ -43,7 +48,7 @@ namespace Typography.Text
         {
             stbuilder.Append(_text);
         }
-      
+
         public void CopyText(char[] destBuffer, int srcIndex, int srcLen, int dstIndex)
         {
             Array.Copy(_text, srcIndex, destBuffer, dstIndex, srcLen);
@@ -62,5 +67,595 @@ namespace Typography.Text
     }
 
 
+    public class EditableTextLine1
+    { 
+        internal EditableTextLine1()
+        { 
+        }
+        public CharBufferSegment Content { get; set; }
+    }
 
+    class LineEditor
+    {
+        PlainTextBlock _textBlock;//owner
+        EditableTextLine1 _line;
+
+        //TODO: review a proper data structure again,use tree of character? (eg RB tree?)
+        //esp for a long line insertion, deletion
+        readonly TextBuffer<int> _arrList = new TextBuffer<int>();
+
+        internal LineEditor()
+        {
+
+        }
+        internal void Bind(PlainTextBlock textBlock)
+        {
+            _textBlock = textBlock;
+        }
+        public void Read(TextCopyBufferUtf32 output)
+        {
+            //read data from this line and write to output
+            output.AppendData(_arrList.UnsafeInternalArray, 0, _arrList.Length);
+        }
+        public void Read(TextCopyBufferUtf32 output, int index, int len)
+        {
+            output.AppendData(_arrList.UnsafeInternalArray, index, len);
+        }
+        public void Bind(EditableTextLine1 line)
+        {
+            if (_line == line)
+            {
+                return;//same line
+            }
+            //
+            if (_line != null)
+            {
+                //update content back 
+                _line.Content = _textBlock.CharSource.NewSpan(_arrList.UnsafeInternalArray, 0, _arrList.Length);
+            }
+            //
+            _line = line;
+            _newCharIndex = 0;//init
+            NewCharIndex = 0;//reset
+
+            CharBufferSegment content = line.Content;
+            _arrList.Clear();
+
+            if (content.len > 0)
+            {
+                //copy content to temp buffer
+                content.WriteTo(_arrList);
+            }
+
+        }
+        /// <summary>
+        /// begin at 0 for new char index
+        /// </summary>
+        int _newCharIndex;//new character index 1:1 based on backend buffer (utf16 or utf32)
+        /// <summary>
+        /// character index for new insertion
+        /// </summary>
+        public int NewCharIndex
+        {
+            get => _newCharIndex;
+            set
+            {
+                if (value <= _arrList.Count)
+                {
+                    _newCharIndex = value;
+                }
+                else
+                {
+                    //not accept
+                    //warn, and set default
+                }
+            }
+        }
+
+        public bool CharIndexOnTheEnd => _newCharIndex == _arrList.Count;
+
+        public void AddText(TextCopyBufferUtf32 copyBuffer, int start, int len)
+        {
+            copyBuffer.CopyTo(_arrList, _newCharIndex, start, len);
+            _newCharIndex += len;
+        }
+
+        public void Split(TextCopyBufferUtf32 rightPart)
+        {
+            int rightPartLen = _arrList.Count - _newCharIndex;
+            rightPart.AppendData(_arrList, _newCharIndex, rightPartLen);
+            _arrList.Remove(_newCharIndex, rightPartLen);
+        }
+        /// <summary>
+        /// single delete
+        /// </summary>
+        public void DoDelete()
+        {
+            if (_newCharIndex < Count)
+            {
+                _newCharIndex++;
+                DoBackSpace();
+            }
+        }
+        public void DeleteRange(int start, int len)
+        {
+            _arrList.Remove(start, len);
+            _newCharIndex = start;
+        }
+        /// <summary>
+        /// single backspace
+        /// </summary>
+        public void DoBackSpace()
+        {
+            if (_newCharIndex < 1) { return; }//early exit
+            //
+            _arrList.Remove(_newCharIndex - 1, 1);
+            _newCharIndex--;
+        }
+        /// <summary>
+        /// add character to current index
+        /// </summary>
+        /// <param name="c"></param>
+        public void AddChar(int c)
+        {
+            //after bind
+            if (_arrList.Count == _newCharIndex)
+            {
+                //the last one
+                _arrList.Append(c);
+                _newCharIndex++;
+            }
+            else
+            {
+                _arrList.Insert(_newCharIndex, c);
+                _newCharIndex++;
+            }
+        }
+        public void Clear()
+        {
+            _arrList.Clear();
+            _newCharIndex = 0;
+        }
+        /// <summary>
+        /// character count
+        /// </summary>
+        public int Count => _arrList.Count;
+    }
+
+
+    public class PlainTextBlock : ITextFlowEditSession
+    {
+        int _currentLineNo;
+        readonly List<EditableTextLine1> _lines = new List<EditableTextLine1>();
+        EditableTextLine1 _currentLine;
+        CharSource _charSource = new CharSource();
+        LineEditor _lineEditor = new LineEditor();
+        TextCopyBufferUtf32 _copyBuffer = new TextCopyBufferUtf32();
+
+
+        public PlainTextBlock()
+        {
+            //always start with blank lines 
+            _lineEditor.Bind(this);
+            _lines.Add(new EditableTextLine1());
+            CurrentLineNumber = 0;
+        }
+        public void Clear()
+        {
+            _lines.Clear();
+            _lines.Add(new EditableTextLine1());
+            CurrentLineNumber = 0;
+        }
+
+        internal CharSource CharSource => _charSource;
+        /// <summary>
+        /// current line new character index
+        /// </summary>
+        public int NewCharIndex
+        {
+            get => _lineEditor.NewCharIndex;
+            set => _lineEditor.NewCharIndex = value;
+        }
+
+        public void ReadCurrentLine(TextCopyBufferUtf32 output)
+        {
+            //read from current line editor
+            _lineEditor.Read(output);
+        }
+        public int LineCount => _lines.Count;
+        public int CurrentLineNumber
+        {
+            get => _currentLineNo;
+            set
+            {
+                if (value >= 0 && value < _lines.Count)
+                {
+                    _currentLineNo = value;
+
+                    EditableTextLine1 line = _lines[value];
+                    if (_currentLine != line)
+                    {
+                        //change 
+                        _currentLine = line;
+                        _lineEditor.Bind(line);
+                    }
+                }
+            }
+        }
+
+        public void AddText(string s)
+        {
+            if (!_selection.isEmpty)
+            {
+                DeleteSelection();
+            }
+
+            //to utf32
+            if (_currentLine != null)
+            {
+                //1.  
+                //parse for each line
+                _copyBuffer.Clear();
+                _copyBuffer.AppendData(s);
+                AddText(_copyBuffer);
+            }
+            else
+            {
+                //TODO: review this
+                throw new NotSupportedException();
+            }
+        }
+
+        public void AddChar(int c)
+        {
+            if (!_selection.isEmpty)
+            {
+                DeleteSelection();
+            }
+
+            if (_currentLine != null)
+            {
+                //1.  
+                _lineEditor.AddChar(c);
+            }
+            else
+            {
+                //TODO: review this
+                throw new NotSupportedException();
+            }
+        }
+
+        public void AddText(TextCopyBuffer copy)
+        {
+            if (!_selection.isEmpty)
+            {
+                DeleteSelection();
+            }
+
+            _copyBuffer.GetReader(out TextBreak.InputReader reader);
+
+            while (reader.Readline(out int begin, out int len, out TextBreak.InputReader.LineEnd lineEnd))
+            {
+                _lineEditor.AddText(_copyBuffer, begin, len);
+
+                if (lineEnd != TextBreak.InputReader.LineEnd.None)
+                {
+                    //insert new line
+                    if (_currentLineNo == _lines.Count - 1)
+                    {
+                        //now we are in the last line
+                        _lines.Add(new EditableTextLine1());
+                        CurrentLineNumber++;
+                    }
+                    else
+                    {
+                        _lines.Insert(CurrentLineNumber + 1, new EditableTextLine1());
+                        CurrentLineNumber++;//move to lower
+                    }
+                }
+            }
+        }
+
+        public bool DoBackspace()
+        {
+            if (!_selection.isEmpty)
+            {
+                return DeleteSelection();
+            }
+
+            //do single backspace
+            if (_lineEditor.NewCharIndex == 0)
+            {
+                //begin of the current line
+                if (CurrentLineNumber == 0)
+                {
+                    return false;
+                }
+                //move up
+                //and join content on this 
+
+                int charCount = _lineEditor.Count;
+                if (charCount > 0)
+                {
+                    //copy content of current line
+                    _copyBuffer.Clear();
+                    _lineEditor.Read(_copyBuffer);
+                }
+
+                CurrentLineNumber--;
+                //move newchar index to end line                
+                _lineEditor.NewCharIndex = _lineEditor.Count;
+                if (charCount > 0)
+                {
+                    //paste content from the lower line
+                    int pos = _lineEditor.NewCharIndex;
+                    _lineEditor.AddText(_copyBuffer, 0, _copyBuffer.Length);
+                    _lineEditor.NewCharIndex = pos;//move to latest pos
+                }
+                //and delete the lower line
+                _lines.RemoveAt(CurrentLineNumber + 1);
+                return true;
+            }
+            else
+            {
+                //on current line
+                _lineEditor.DoBackSpace();
+                return true;
+            }
+        }
+
+        bool DeleteSelection()
+        {
+            if (_selection.isEmpty) { return false; }
+
+            //
+            _selection.Normalize();
+            if (_selection.startLineNo == _selection.endLineNo)
+            {
+                //on the sameline
+                CurrentLineNumber = _selection.startLineNo;
+                _lineEditor.DeleteRange(_selection.startLineNewCharIndex, _selection.endLineNewCharIndex - _selection.startLineNewCharIndex);
+                _selection.Finish();
+            }
+            else
+            {
+                //more than 1 line
+                CurrentLineNumber = _selection.startLineNo;
+                _lineEditor.DeleteRange(_selection.startLineNewCharIndex, _lineEditor.Count - _selection.startLineNewCharIndex);
+                //
+                int endLineNo = _selection.endLineNo;
+
+                int betweenCount = _selection.endLineNo - _selection.startLineNo - 1;
+                if (betweenCount > 0)
+                {
+                    int nextLineNo = _selection.startLineNo + 1;
+                    for (int i = _selection.endLineNo - 1; i >= nextLineNo; --i)
+                    {
+                        _lines.RemoveAt(i);
+                    }
+                    endLineNo -= betweenCount;
+                }
+
+                CurrentLineNumber = endLineNo;
+                _lineEditor.DeleteRange(0, _selection.endLineNewCharIndex);
+                _selection.Finish();
+
+                DoBackspace();
+            }
+
+            return true;
+        }
+        public VisualSelectionRangeSnapShot DoDelete()
+        {
+            if (!_selection.isEmpty)
+            {
+                DeleteSelection();
+                return VisualSelectionRangeSnapShot.Empty;
+            }
+
+            if (_lineEditor.NewCharIndex < _lineEditor.Count)
+            {
+                _lineEditor.DoDelete();
+            }
+            else
+            {
+                //blank line
+                //the bring to lower line to join with this line
+                if (this.LineCount > 1 && _currentLineNo < this.LineCount - 1)
+                {
+                    //copy content from lower line to 
+                    int pos = _lineEditor.NewCharIndex;
+                    CurrentLineNumber++;//move to lower line
+                    DoBackspace();
+                    _lineEditor.NewCharIndex = pos;
+                }
+            }
+
+            return VisualSelectionRangeSnapShot.Empty;
+        }
+
+        /// <summary>
+        /// do end on current line
+        /// </summary>
+        public void DoEnd()
+        {
+            _lineEditor.NewCharIndex = _lineEditor.Count;
+        }
+
+        /// <summary>
+        /// do home on current line
+        /// </summary>
+        public void DoHome()
+        {
+            //do home on current line
+            _lineEditor.NewCharIndex = 0;
+        }
+
+        /// <summary>
+        /// split current line into newline
+        /// </summary>
+        public void SplitIntoNewLine()
+        {
+            if (!_selection.isEmpty)
+            {
+                DeleteSelection();
+            }
+
+            if (_lineEditor.CharIndexOnTheEnd)
+            {
+                //end of current line
+                _lines.Insert(CurrentLineNumber + 1, new EditableTextLine1());
+                CurrentLineNumber++;//move to lower
+            }
+            else
+            {
+                //split current line into 2
+                _copyBuffer.Clear();
+                _lineEditor.Split(_copyBuffer);
+
+                //insert newline
+                _lines.Insert(CurrentLineNumber + 1, new EditableTextLine1());
+                CurrentLineNumber++;//move to lower
+                _lineEditor.AddText(_copyBuffer, 0, _copyBuffer.Length);
+                _lineEditor.NewCharIndex = 0;//move to line start
+            }
+        }
+
+        //------------------------------------------
+        readonly PlainTextSelection _selection = new PlainTextSelection();
+        /// <summary>
+        /// start selection on current character index
+        /// </summary>
+        public void StartSelect()
+        {
+            _selection.StartSelect(_currentLineNo, _lineEditor.NewCharIndex);
+        }
+        /// <summary>
+        /// end selection
+        /// </summary>
+        public void EndSelect()
+        {
+            _selection.EndSelect(_currentLineNo, _lineEditor.NewCharIndex);
+        }
+        public void CancelSelect()
+        {
+            _selection.CancelSelection();
+        }
+        public void TryMoveCaretTo(int charIndex, bool backward = false)
+        {
+            throw new NotImplementedException();
+        }
+
+        class PlainTextSelection
+        {
+            public int startLineNo;
+            public int startLineNewCharIndex;//start line new char-index
+            public int endLineNo;
+            public int endLineNewCharIndex;//on end line
+            public bool isEmpty = true;
+
+            public void StartSelect(int startLineNo, int charIndex)
+            {
+                this.isEmpty = false;
+                this.startLineNo = endLineNo = startLineNo;
+                this.startLineNewCharIndex = endLineNewCharIndex = charIndex;
+            }
+            public void EndSelect(int endLineNo, int charIndex)
+            {
+                this.endLineNo = endLineNo;
+                this.endLineNewCharIndex = charIndex;
+            }
+            public void CancelSelection()
+            {
+                this.isEmpty = true;
+            }
+            public void Finish()
+            {
+                this.isEmpty = true;
+            }
+            /// <summary>
+            /// normalized selection
+            /// </summary>
+            public void Normalize()
+            {
+                if (endLineNo < startLineNo)
+                {
+                    //swap
+                    int temp = startLineNo;
+                    startLineNo = endLineNo;
+                    endLineNo = temp;
+                    //
+                    //force swap start and end char index
+                    temp = endLineNewCharIndex;
+                    startLineNewCharIndex = endLineNewCharIndex;
+                    endLineNewCharIndex = temp;
+
+                }
+                else if (endLineNo == startLineNo)
+                {
+                    //on the sameline
+                    if (endLineNewCharIndex < startLineNewCharIndex)
+                    {
+                        int temp = endLineNewCharIndex;
+                        startLineNewCharIndex = endLineNewCharIndex;
+                        endLineNewCharIndex = temp;
+                    }
+                }
+            }
+
+        }
+
+        //----
+        public void CopyAll(TextCopyBufferUtf32 output)
+        {
+            //all
+            int j = _lines.Count;
+            for (int i = 0; i < j; ++i)
+            {
+                if (i == _currentLineNo)
+                {
+                    _lineEditor.Read(output);
+                }
+                else
+                {
+                    _lines[i].Content.WriteTo(output);
+                }
+            }
+        }
+        public void CopySelection(TextCopyBufferUtf32 output)
+        {
+            //only selection
+            if (_selection.isEmpty) { return; }
+
+            int currentLine = _currentLineNo;
+            _selection.Normalize();
+            if (_selection.startLineNo == _selection.endLineNo)
+            {
+                //on the sameline
+                CurrentLineNumber = _selection.startLineNo;
+                _lineEditor.Read(output, _selection.startLineNewCharIndex, _selection.endLineNewCharIndex - _selection.startLineNewCharIndex);
+            }
+            else
+            {
+                //more than 1 line
+                CurrentLineNumber = _selection.startLineNo;
+                _lineEditor.Read(output, _selection.startLineNewCharIndex, _lineEditor.Count - _selection.startLineNewCharIndex);
+                //
+                int endLineNo = _selection.endLineNo;
+                if ((endLineNo - _selection.startLineNo - 1) > 0)
+                {
+
+                    for (int i = _selection.startLineNo + 1; i < endLineNo; ++i)
+                    {
+                        _lines[i].Content.WriteTo(output);
+                    }
+                }
+
+                CurrentLineNumber = endLineNo;
+                _lineEditor.Read(output, 0, _selection.endLineNewCharIndex);
+                CurrentLineNumber = currentLine;//gotback
+            }
+
+        }
+    }
 }

@@ -22,7 +22,7 @@ namespace Typography.Text
         public abstract void AppendData(int[] buffer, int start, int len);
         public abstract unsafe void AppendData(char* buffer, int len);
         //
-        public abstract void CopyTo(ArrayList<int> output);
+        public abstract void CopyTo(TextBuffer<int> output);
         public abstract void CopyTo(StringBuilder stbuilder);
         public abstract void CopyTo(StringBuilder stbuilder, int startIndex, int len);
         //
@@ -31,7 +31,7 @@ namespace Typography.Text
 
     public sealed class TextCopyBufferUtf16 : TextCopyBuffer
     {
-        readonly ArrayList<char> _utf16Buffer = new ArrayList<char>();
+        readonly TextBuffer<char> _utf16Buffer = new TextBuffer<char>();
         public TextCopyBufferUtf16() { }
         public TextCopyBufferUtf16(char[] buffer)
         {
@@ -84,7 +84,7 @@ namespace Typography.Text
             //TODO: review here
             return _utf16Buffer[index];
         }
-        public override void CopyTo(ArrayList<int> output)
+        public override void CopyTo(TextBuffer<int> output)
         {
             //from utf16 to utf32
             int end = _utf16Buffer.Length;
@@ -120,7 +120,7 @@ namespace Typography.Text
     public sealed class TextCopyBufferUtf32 : TextCopyBuffer
     {
 
-        readonly ArrayList<int> _utf32Buffer = new ArrayList<int>();
+        readonly TextBuffer<int> _utf32Buffer = new TextBuffer<int>();
         public TextCopyBufferUtf32() { }
         public TextCopyBufferUtf32(char[] buffer)
         {
@@ -197,14 +197,25 @@ namespace Typography.Text
         {
             _utf32Buffer.Append(buffer, start, len);
         }
+        public void AppendData(TextBuffer<int> buffer, int start, int len)
+        {
+            _utf32Buffer.Append(buffer.UnsafeInternalArray, start, len);
+        }
+
         public int GetChar(int index)
         {
             //TODO: review here
             return _utf32Buffer[index];
         }
-        public override void CopyTo(ArrayList<int> output)
+        public override void CopyTo(TextBuffer<int> output)
         {
             output.Append(_utf32Buffer.UnsafeInternalArray, 0, _utf32Buffer.Length);
+        }
+        public void CopyTo(TextBuffer<int> output, int dstStart, int srcStart, int srcLen)
+        {
+            //ensure outputlen
+
+            output.Append(_utf32Buffer.UnsafeInternalArray, srcStart, srcLen);
         }
         public override void CopyTo(StringBuilder stbuilder)
         {
@@ -224,6 +235,8 @@ namespace Typography.Text
                 }
             }
         }
+
+
         /// <summary>
         /// copy content to string builder
         /// </summary>
@@ -252,6 +265,36 @@ namespace Typography.Text
         {
             reader = new InputReader(_utf32Buffer.UnsafeInternalArray, 0, _utf32Buffer.Length);
         }
+
+        /// <summary>
+        /// copy from internal buffer to output
+        /// </summary>
+        /// <param name="output"></param>
+        /// <param name="dstBegin"></param>
+        /// <param name="srcBegin"></param>
+        /// <param name="srcLen"></param>
+        public void CopyTo(System.Collections.Generic.List<int> output, int dstBegin, int srcBegin, int srcLen)
+        {
+            if (output.Count == dstBegin)
+            {
+                //append last
+                for (int i = 0; i < srcLen; ++i)
+                {
+                    output.Add(_utf32Buffer[srcBegin + i]);
+                }
+            }
+            else
+            {
+                for (int i = 0; i < srcLen; ++i)
+                {
+                    //insert range***
+                    output.Insert(dstBegin, _utf32Buffer[srcBegin + i]);
+                    dstBegin++;
+                }
+            }
+
+        }
+
     }
 
 
@@ -279,15 +322,15 @@ namespace Typography.Text
             }
         }
     }
-    
-    
+
+
     /// <summary>
     /// forward only character source 
     /// </summary>
     public class CharSource
     {
-        //readonly ArrayList<char> _arrList = new ArrayList<char>();
-        readonly ArrayList<int> _arrList = new ArrayList<int>();
+
+        readonly TextBuffer<int> _arrList = new TextBuffer<int>();
 
 #if DEBUG
         public CharSource()
@@ -298,13 +341,20 @@ namespace Typography.Text
         /// <summary>
         /// write content to TextCopyBuffer
         /// </summary>
-        /// <param name="sb"></param>
+        /// <param name="output"></param>
         /// <param name="offset"></param>
         /// <param name="len"></param>
-        internal void WriteTo(TextCopyBuffer sb, int offset, int len)
+        internal void WriteTo(TextCopyBuffer output, int offset, int len)
         {
             //convert utf32 to utf16 
-            sb.AppendData(_arrList.UnsafeInternalArray, offset, len);
+            output.AppendData(_arrList.UnsafeInternalArray, offset, len);
+        }
+        internal void WriteTo(TextBuffer<int> output, int offset, int len)
+        {
+            //convert utf32 to utf16 
+            //temp
+            output.Append(_arrList.UnsafeInternalArray, offset, len);
+
         }
         internal void Copy(int srcStart, int srcLen, char[] outputArr, int outputStart)
         {
@@ -454,7 +504,7 @@ namespace Typography.Text
             return new CharSpan(_charSource, beginAt, count);
         }
 
-        public static readonly ArrayListSegment<char> Empty = new ArrayListSegment<char>();
+        public static readonly TextBufferSegment<char> Empty = new TextBufferSegment<char>();
 #if DEBUG
         public string dbugGetString()
         {
@@ -502,6 +552,12 @@ namespace Typography.Text
         {
             _charSource.WriteTo(sb, beginAt + start, count);
         }
+        public void WriteTo(TextBuffer<int> output)
+        {
+            _charSource.WriteTo(output, beginAt, len);
+        }
+
+
         public void Copy(char[] outputArr, int start, int count)
         {
             _charSource.Copy(beginAt + start, count, outputArr, 0);
@@ -531,7 +587,7 @@ namespace Typography.Text
             return new CharSpan(_charSource, beginAt, count);
         }
 
-        public static readonly ArrayListSegment<char> Empty = new ArrayListSegment<char>();
+        public static readonly TextBufferSegment<char> Empty = new TextBufferSegment<char>();
 #if DEBUG
         public string dbugGetString()
         {

@@ -21,26 +21,26 @@
 
 namespace Typography.Text
 {
-    public readonly struct ArrayListSegment<T>
+    public readonly struct TextBufferSegment<T>
     {
-        internal readonly ArrayList<T> _arrList;
+        internal readonly TextBuffer<T> _arrList;
         public readonly int beginAt;
         public readonly int len;
-        public ArrayListSegment(ArrayList<T> arrList, int beginAt, int len)
+        public TextBufferSegment(TextBuffer<T> arrList, int beginAt, int len)
         {
-            this._arrList = arrList;
+            _arrList = arrList;
             this.beginAt = beginAt;
             this.len = len;
         }
 
         public int Count => len;
 
-        public static void UnsafeGetInternalArr(in ArrayListSegment<T> listSpan, out T[] internalArr)
+        public static void UnsafeGetInternalArr(in TextBufferSegment<T> listSpan, out T[] internalArr)
         {
             internalArr = listSpan._arrList.UnsafeInternalArray;
         }
 
-        public static readonly ArrayListSegment<T> Empty = new ArrayListSegment<T>();
+        public static readonly TextBufferSegment<T> Empty = new TextBufferSegment<T>();
 #if DEBUG
         public override string ToString()
         {
@@ -49,21 +49,21 @@ namespace Typography.Text
 #endif
     }
 
-    public sealed class ArrayList<T>
+    public sealed class TextBuffer<T>
     {
         static readonly T[] s_empty = new T[0];
 
         int _currentSize;
         T[] _internalArray = s_empty;
 
-        public ArrayList()
+        public TextBuffer()
         {
         }
-        public ArrayList(int cap)
+        public TextBuffer(int cap)
         {
             Allocate(cap, 0);
         }
-        public ArrayList(ArrayList<T> srcCopy, int plusSize)
+        public TextBuffer(TextBuffer<T> srcCopy, int plusSize)
         {
             Allocate(srcCopy.AllocatedSize, srcCopy.AllocatedSize + plusSize);
             if (srcCopy._currentSize != 0)
@@ -143,10 +143,7 @@ namespace Typography.Text
         }
 
 
-        public void Zero()
-        {
-            System.Array.Clear(_internalArray, 0, _internalArray.Length);
-        }
+
         public T[] ToArray()
         {
             T[] output = new T[_currentSize];
@@ -205,10 +202,8 @@ namespace Typography.Text
         {
             EnsureSpaceForAppend(len);
             System.Array.Copy(_internalArray, srcIndex, _internalArray, _currentSize, len);
-            _currentSize = _currentSize + len;
+            _currentSize += len;
         }
-
-
         public T this[int i]
         {
             get => _internalArray[i];
@@ -218,14 +213,70 @@ namespace Typography.Text
         /// access to internal array,
         /// </summary>
         public T[] UnsafeInternalArray => _internalArray;
-        public void SetData(int index, T data)
-        {
-            _internalArray[index] = data;
-        }
+
         //
         public int Length => _currentSize;
 
         //
-        public ArrayListSegment<T> CreateSpan(int beginAt, int len) => new ArrayListSegment<T>(this, beginAt, len);
+        public TextBufferSegment<T> CreateSpan(int beginAt, int len) => new TextBufferSegment<T>(this, beginAt, len);
+
+
+
+        //-------------------------------------------
+        public void Insert(int index, T value)
+        {
+            //split to left-right
+            if (index < 0 || index > _currentSize)
+            {
+                throw new System.NotSupportedException();
+            }
+            EnsureSpaceForAppend(_currentSize + 1);
+            //
+            //move data to right side
+
+            for (int i = Length - 1; i >= index; --i)
+            {
+                _internalArray[i + 1] = _internalArray[i];
+            }
+            _internalArray[index] = value;
+            _currentSize++;
+        }
+        public void Insert(int index, T[] values)
+        {
+            if (index < 0 || index > _currentSize)
+            {
+                throw new System.NotSupportedException();
+            }
+            //------------------
+            int reqSpace = values.Length;
+            EnsureSpaceForAppend(_currentSize + reqSpace);
+            for (int i = Length - 1; i >= index; --i)
+            {
+                _internalArray[i + reqSpace] = _internalArray[i];
+            }
+            for (int i = 0; i < reqSpace; ++i)
+            {
+                _internalArray[index + i] = values[i];
+            }
+            System.Array.Copy(values, 0, _internalArray, index, reqSpace);
+            _currentSize += reqSpace;
+        }
+        public void Remove(int index) => Remove(index, 1);
+        public void Remove(int index, int len)
+        {
+            if (len < 1 || index < 0 || index > _currentSize)
+            {
+                throw new System.NotSupportedException();
+            }
+
+            int pos = index;
+            int copy_count = _currentSize - (index + len);
+            for (int i = 0; i < copy_count; ++i)
+            {
+                _internalArray[pos] = _internalArray[pos + len];
+                pos++;
+            }
+            _currentSize -= len;
+        }
     }
 }
