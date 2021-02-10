@@ -6,6 +6,7 @@ using System.Collections.Generic;
 
 using LayoutFarm.TextEditing.Commands;
 using LayoutFarm.TextEditing;
+using System.Collections;
 
 namespace Typography.Text
 {
@@ -28,57 +29,85 @@ namespace Typography.Text
     /// </summary>
     public class PlainTextLine
     {
-        readonly char[] _text;//***
+        public PlainTextLine() { }
+        public CharBufferSegment Content { get; set; }
 
-        public PlainTextLine(string text)
-        {
-            _text = text.ToCharArray();
-            EndWith = PlainTextLineEnd.None;
-        }
-        public PlainTextLine(char[] buffer)
-        {
-            _text = buffer;
-            EndWith = PlainTextLineEnd.None;
-        }
         public PlainTextLineEnd EndWith { get; set; }
 
-        public string GetText() => new string(_text);
-
-        public void CopyText(StringBuilder stbuilder)
+        public string GetText() => PlainTextUtils.ReadString(Content);
+        public void WriteTo(StringBuilder sb)
         {
-            stbuilder.Append(_text);
+            PlainTextUtils.WriteTo(Content, sb);
         }
+        public int CharCount => Content.len;
 
-        public void CopyText(char[] destBuffer, int srcIndex, int srcLen, int dstIndex)
-        {
-            Array.Copy(_text, srcIndex, destBuffer, dstIndex, srcLen);
-        }
-        public int CharCount => _text.Length;
+        public PlainTextLine Clone() => new PlainTextLine() { Content = Content };
+        //
+
 #if DEBUG
         public override string ToString()
         {
             return GetText();
         }
 #endif
-        public PlainTextLine Clone()
-        {
-            return new PlainTextLine(_text);
-        }
     }
 
-
-    public class EditableTextLine
+    static class PlainTextUtils
     {
-        internal EditableTextLine()
+        [ThreadStatic]
+        static StringBuilder s_sb;
+        [ThreadStatic]
+        static TextCopyBufferUtf32 s_copyBuffer;
+
+        static void Init()
         {
+            s_sb = new StringBuilder();
+            s_copyBuffer = new TextCopyBufferUtf32();
         }
-        public CharBufferSegment Content { get; set; }
+        public static string ReadString(CharBufferSegment charSegment)
+        {
+            if (s_sb != null) { Init(); }
+
+            charSegment.WriteTo(s_copyBuffer);
+            return ReadString(s_copyBuffer);
+        }
+        public static string ReadString(TextCopyBufferUtf32 copyBuffer)
+        {
+            if (s_sb != null) { Init(); }
+
+            s_sb.Length = 0;//reset  
+            copyBuffer.CopyTo(s_sb);
+            return s_sb.ToString();
+        }
+        public static string ReadCurrentLine(PlainTextEditSession block)
+        {
+            if (s_sb != null) { Init(); }
+
+            s_sb.Length = 0;//reset
+            s_copyBuffer.Clear();//reset
+            block.ReadCurrentLine(s_copyBuffer);
+            s_copyBuffer.CopyTo(s_sb);
+            return s_sb.ToString();
+        }
+
+        public static void WriteTo(CharBufferSegment charSegment, StringBuilder sb)
+        {
+            if (s_sb != null) { Init(); }
+
+            // 
+            s_copyBuffer.Clear();//reset
+            charSegment.WriteTo(s_copyBuffer);
+            s_copyBuffer.CopyTo(sb);
+        }
     }
+
+
+
 
     class LineEditor
     {
-        PlainTextBlock _textBlock;//owner
-        EditableTextLine _line;
+        PlainTextEditSession _textBlock;//owner
+        PlainTextLine _line;
 
         //TODO: review a proper data structure again,use tree of character? (eg RB tree?)
         //esp for a long line insertion, deletion
@@ -96,7 +125,7 @@ namespace Typography.Text
         {
 
         }
-        internal void Bind(PlainTextBlock textBlock)
+        internal void Bind(PlainTextEditSession textBlock)
         {
             _textBlock = textBlock;
         }
@@ -125,7 +154,7 @@ namespace Typography.Text
                 _line.Content.WriteTo(output, index, len);
             }
         }
-        public void Bind(EditableTextLine line)
+        public void Bind(PlainTextLine line)
         {
             if (_line == line)
             {
@@ -148,6 +177,7 @@ namespace Typography.Text
 
             NewCharIndex = 0;
         }
+
 
         /// <summary>
         /// load content of each line to edit mode
@@ -276,32 +306,84 @@ namespace Typography.Text
         public int Count => _loaded ? _arrList.Count : _initContentLen;
     }
 
+    public class PlainTextDocument1 : IEnumerable<PlainTextLine>
+    {
+        CharSource _charSource = new CharSource();
+        readonly List<PlainTextLine> _lines = new List<PlainTextLine>();
+        public PlainTextDocument1()
+        {
 
-    public class PlainTextBlock : ITextFlowEditSession
+        }
+        public int LineCount => _lines.Count;
+        internal List<PlainTextLine> UnsafeInternalList => _lines;
+        internal CharSource CharSource => _charSource;
+        public void LoadText(IEnumerable<string> lines)
+        {
+            foreach (string line in lines)
+            {
+                _lines.Add(new PlainTextLine() { Content = _charSource.NewSegment(new TextBufferSpan(line.ToCharArray())) });
+            }
+        }
+        public void LoadText(string text)
+        {
+            using (System.IO.StringReader reader = new System.IO.StringReader(text))
+            {
+                string line = reader.ReadLine();
+                while (line != null)
+                {
+                    //...       
+
+                    _lines.Add(new PlainTextLine() { Content = _charSource.NewSegment(new TextBufferSpan(line.ToCharArray())) });
+                    line = reader.ReadLine();
+                }
+            }
+        }
+
+        public IEnumerator<PlainTextLine> GetEnumerator()
+        {
+            return ((IEnumerable<PlainTextLine>)_lines).GetEnumerator();
+        }
+
+        IEnumerator IEnumerable.GetEnumerator()
+        {
+            return ((IEnumerable)_lines).GetEnumerator();
+        }
+    }
+
+    public class PlainTextEditSession : ITextFlowEditSession
     {
         int _currentLineNo;
-        readonly List<EditableTextLine> _lines = new List<EditableTextLine>();
-        EditableTextLine _currentLine;
-        CharSource _charSource = new CharSource();
+        PlainTextLine _currentLine;
         LineEditor _lineEditor = new LineEditor();
         TextCopyBufferUtf32 _copyBuffer = new TextCopyBufferUtf32();
-
-
-        public PlainTextBlock()
+        List<PlainTextLine> _lines;
+        PlainTextDocument1 _doc;
+        public PlainTextEditSession()
         {
-            //always start with blank lines 
+        }
+        public void LoadPlainText(PlainTextDocument1 doc)
+        {
+            _doc = doc;
+            _lines = doc.UnsafeInternalList;
+            //move to 
+            if (_lines.Count == 0)
+            {
+                _lines.Add(new PlainTextLine());
+                CurrentLineNumber = 0;
+            }
+            _lineEditor = new LineEditor();
             _lineEditor.Bind(this);
-            _lines.Add(new EditableTextLine());
             CurrentLineNumber = 0;
+            NewCharIndex = 0;
         }
         public void Clear()
         {
             _lines.Clear();
-            _lines.Add(new EditableTextLine());
+            _lines.Add(new PlainTextLine());
             CurrentLineNumber = 0;
         }
 
-        internal CharSource CharSource => _charSource;
+        internal CharSource CharSource => _doc.CharSource;
         /// <summary>
         /// current line new character index
         /// </summary>
@@ -326,7 +408,7 @@ namespace Typography.Text
                 {
                     _currentLineNo = value;
 
-                    EditableTextLine line = _lines[value];
+                    PlainTextLine line = _lines[value];
                     if (_currentLine != line)
                     {
                         //change 
@@ -398,12 +480,12 @@ namespace Typography.Text
                     if (_currentLineNo == _lines.Count - 1)
                     {
                         //now we are in the last line
-                        _lines.Add(new EditableTextLine());
+                        _lines.Add(new PlainTextLine());
                         CurrentLineNumber++;
                     }
                     else
                     {
-                        _lines.Insert(CurrentLineNumber + 1, new EditableTextLine());
+                        _lines.Insert(CurrentLineNumber + 1, new PlainTextLine());
                         CurrentLineNumber++;//move to lower
                     }
                 }
@@ -558,7 +640,7 @@ namespace Typography.Text
             if (_lineEditor.CharIndexOnTheEnd)
             {
                 //end of current line
-                _lines.Insert(CurrentLineNumber + 1, new EditableTextLine());
+                _lines.Insert(CurrentLineNumber + 1, new PlainTextLine());
                 CurrentLineNumber++;//move to lower
             }
             else
@@ -568,7 +650,7 @@ namespace Typography.Text
                 _lineEditor.Split(_copyBuffer);
 
                 //insert newline
-                _lines.Insert(CurrentLineNumber + 1, new EditableTextLine());
+                _lines.Insert(CurrentLineNumber + 1, new PlainTextLine());
                 CurrentLineNumber++;//move to lower
                 _lineEditor.AddText(_copyBuffer, 0, _copyBuffer.Length);
                 _lineEditor.NewCharIndex = 0;//move to line start
