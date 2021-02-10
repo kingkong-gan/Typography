@@ -187,6 +187,7 @@ namespace Typography.Text
             if (_loaded) { return; }
 
             //
+             
             CharBufferSegment content = _line.Content;
             if (content.len > 0)
             {
@@ -363,6 +364,8 @@ namespace Typography.Text
         }
         public void LoadPlainText(PlainTextDocument1 doc)
         {
+            _lineEditor = new LineEditor();
+            _lineEditor.Bind(this);
             _doc = doc;
             _lines = doc.UnsafeInternalList;
             //move to 
@@ -371,8 +374,7 @@ namespace Typography.Text
                 _lines.Add(new PlainTextLine());
                 CurrentLineNumber = 0;
             }
-            _lineEditor = new LineEditor();
-            _lineEditor.Bind(this);
+         
             CurrentLineNumber = 0;
             NewCharIndex = 0;
         }
